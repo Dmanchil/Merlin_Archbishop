@@ -19,19 +19,37 @@ class SQLiteDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(await database.register_user(123), (True, "ru"))
             self.assertEqual(await database.register_user(123), (False, "ru"))
+            self.assertEqual(await database.get_game_history(123), [])
 
             await database.set_church(123, "Церковь Вечной Ночи")
+            await database.append_game_history(
+                123,
+                {"game": "rps", "result": "win", "player_choice": "rock"},
+            )
+            await database.append_game_history(
+                123,
+                {"game": "tictactoe", "result": "draw", "board": "XOXOXOOXX"},
+            )
+            history = await database.get_game_history(123)
             with closing(sqlite3.connect(database_path)) as connection:
                 church = connection.execute(
                     "SELECT church FROM users WHERE tg_id = ?",
                     (123,),
                 ).fetchone()[0]
+                raw_history = connection.execute(
+                    "SELECT history_of_games FROM users WHERE tg_id = ?",
+                    (123,),
+                ).fetchone()[0]
 
             self.assertEqual(church, "Церковь Вечной Ночи")
+            self.assertEqual(len(history), 2)
+            self.assertEqual([entry["game"] for entry in history], ["rps", "tictactoe"])
+            self.assertTrue(all(entry.get("played_at") for entry in history))
+            self.assertEqual(json.loads(raw_history), history)
             await database.close()
 
     def test_church_keyboard_has_one_button_per_row(self) -> None:
-        keyboard = church_selection_keyboard()
+        keyboard = church_selection_keyboard("ru")
 
         self.assertIsInstance(keyboard, InlineKeyboardMarkup)
         self.assertEqual(
@@ -131,7 +149,8 @@ class SQLiteDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 ]
                 row = connection.execute(
                     """
-                    SELECT tg_id, language, church, sequence, contribution, first_seen
+                    SELECT tg_id, language, church, sequence, contribution, first_seen,
+                           history_of_games
                     FROM users WHERE tg_id = ?
                     """,
                     (123,),
@@ -150,10 +169,12 @@ class SQLiteDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     "sequence",
                     "contribution",
                     "first_seen",
+                    "history_of_games",
                 ],
             )
             self.assertEqual(row[:5], (123, "en", "", None, 0.0))
             self.assertTrue(row[5])
+            self.assertEqual(json.loads(row[6]), [])
             self.assertIsNone(old_table)
             await database.close()
 

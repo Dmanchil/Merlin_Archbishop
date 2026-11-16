@@ -5,15 +5,15 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from localization import CHURCHES, Language, text
+from localization import CHURCHES, Language, church_name, text
 
 
-def church_selection_keyboard() -> InlineKeyboardMarkup:
+def church_selection_keyboard(language: Language) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=church,
+                    text=church_name(language, church),
                     callback_data=f"church:{index}",
                 )
             ]
@@ -22,23 +22,43 @@ def church_selection_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def lotm_menu_keyboard() -> InlineKeyboardMarkup:
+def lotm_menu_keyboard(language: Language) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Получить задание",
+                    text=text(language, "lotm_menu_get_task"),
                     callback_data="menu:get_task",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Мои очки вклада",
+                    text=text(language, "lotm_menu_contribution"),
                     callback_data="menu:contribution",
                 ),
                 InlineKeyboardButton(
-                    text="Персонаж",
+                    text=text(language, "lotm_menu_character"),
                     callback_data="menu:character",
+                ),
+            ],
+        ],
+    )
+
+
+def task_confirmation_keyboard(
+    user_id: int,
+    language: Language,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=text(language, "task_proceed"),
+                    callback_data=f"task:proceed:{user_id}",
+                ),
+                InlineKeyboardButton(
+                    text=text(language, "task_back"),
+                    callback_data=f"task:back:{user_id}",
                 ),
             ],
         ],

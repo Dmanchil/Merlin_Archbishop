@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +128,80 @@ class SQLiteDatabase:
                 )
             return cursor.rowcount == 1
 
+    async def append_game_history(
+        self,
+        user_id: int,
+        entry: dict[str, Any],
+    ) -> None:
+        if not isinstance(entry, dict) or not isinstance(entry.get("game"), str):
+            raise ValueError("Запись истории должна содержать название игры")
+
+        await self.initialize()
+        async with self._lock:
+            connection = self._get_connection()
+            with connection:
+                row = connection.execute(
+                    "SELECT history_of_games FROM users WHERE tg_id = ?",
+                    (user_id,),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError(
+                        f"Не удалось сохранить историю: пользователь {user_id} не найден"
+                    )
+
+                try:
+                    history = json.loads(row[0])
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        f"История игр пользователя {user_id} содержит некорректный JSON"
+                    ) from error
+                if not isinstance(history, list) or any(
+                    not isinstance(item, dict) for item in history
+                ):
+                    raise ValueError(
+                        f"История игр пользователя {user_id} должна быть JSON-массивом объектов"
+                    )
+
+                saved_entry = dict(entry)
+                saved_entry.setdefault(
+                    "played_at",
+                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                )
+                history.append(saved_entry)
+                connection.execute(
+                    "UPDATE users SET history_of_games = ? WHERE tg_id = ?",
+                    (
+                        json.dumps(history, ensure_ascii=False, separators=(",", ":")),
+                        user_id,
+                    ),
+                )
+
+    async def get_game_history(self, user_id: int) -> list[dict[str, Any]]:
+        await self.initialize()
+        async with self._lock:
+            row = self._get_connection().execute(
+                "SELECT history_of_games FROM users WHERE tg_id = ?",
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"Не удалось загрузить историю: пользователь {user_id} не найден"
+                )
+
+            try:
+                history = json.loads(row[0])
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"История игр пользователя {user_id} содержит некорректный JSON"
+                ) from error
+            if not isinstance(history, list) or any(
+                not isinstance(item, dict) for item in history
+            ):
+                raise ValueError(
+                    f"История игр пользователя {user_id} должна быть JSON-массивом объектов"
+                )
+            return history
+
     async def set_language(self, user_id: int, language: Language) -> None:
         if language not in SUPPORTED_LANGUAGES:
             raise ValueError(f"Неподдерживаемый язык: {language}")
@@ -181,6 +256,7 @@ class SQLiteDatabase:
             "sequence",
             "contribution",
             "first_seen",
+            "history_of_games",
         }
         if users_exists:
             current_columns = {
@@ -223,7 +299,8 @@ class SQLiteDatabase:
                 church TEXT NOT NULL DEFAULT '',
                 sequence INTEGER,
                 contribution REAL NOT NULL DEFAULT 0,
-                first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                history_of_games TEXT NOT NULL DEFAULT '[]'
             )
             """
         )
@@ -235,6 +312,7 @@ class SQLiteDatabase:
             "sequence": ("sequence",),
             "contribution": ("contribution",),
             "first_seen": ("first_seen",),
+            "history_of_games": ("history_of_games",),
         }
         for table_name, columns in sources:
             id_column = next(
