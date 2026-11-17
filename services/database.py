@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from localization import CHURCHES, Language, SUPPORTED_LANGUAGES
+from services.pathway_data import pathway_rows
 
 
 class SQLiteDatabase:
@@ -39,6 +40,8 @@ class SQLiteDatabase:
                     )
                     """
                 )
+                self._migrate_pathways_schema(connection)
+                self._seed_pathways(connection)
                 self._migrate_users_schema(connection)
                 connection.execute(
                     'INSERT OR IGNORE INTO "конфиг" (key, value) VALUES (?, ?)',
@@ -63,6 +66,72 @@ class SQLiteDatabase:
                 raise
 
             self._connection = connection
+
+    def _migrate_pathways_schema(self, connection: sqlite3.Connection) -> None:
+        table_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pathways'"
+        ).fetchone() is not None
+        if not table_exists:
+            connection.execute(
+                """
+                CREATE TABLE pathways (
+                    name TEXT PRIMARY KEY,
+                    ru TEXT,
+                    eng TEXT,
+                    church TEXT,
+                    all_users INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            return
+
+        columns = connection.execute('PRAGMA table_info("pathways")').fetchall()
+        column_names = {row[1] for row in columns}
+        if "name" not in column_names:
+            raise ValueError("В таблице pathways отсутствует обязательный столбец name")
+        if next(row[5] for row in columns if row[1] == "name") == 1:
+            return
+
+        expected_columns = {"name", "ru", "eng", "church", "all_users"}
+        missing_columns = expected_columns - column_names
+        if missing_columns:
+            raise ValueError(
+                "Невозможно обновить таблицу pathways: отсутствуют столбцы "
+                + ", ".join(sorted(missing_columns))
+            )
+
+        connection.execute("DROP TABLE IF EXISTS pathways__migration")
+        connection.execute(
+            """
+            CREATE TABLE pathways__migration (
+                name TEXT PRIMARY KEY,
+                ru TEXT,
+                eng TEXT,
+                church TEXT,
+                all_users INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO pathways__migration (name, ru, eng, church, all_users)
+            SELECT name, ru, eng, church, COALESCE(all_users, 0)
+            FROM pathways
+            """
+        )
+        connection.execute("DROP TABLE pathways")
+        connection.execute(
+            "ALTER TABLE pathways__migration RENAME TO pathways"
+        )
+
+    def _seed_pathways(self, connection: sqlite3.Connection) -> None:
+        connection.executemany(
+        """
+        INSERT OR IGNORE INTO pathways (name, ru, eng, church)
+        VALUES (?, ?, ?, ?)
+        """,
+        pathway_rows(),
+        )
 
     async def close(self) -> None:
         async with self._lock:

@@ -118,8 +118,91 @@ class SQLiteDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(users, [(123, "en"), (456, "ru")])
             self.assertTrue({"users", "конфиг"}.issubset(tables))
+            self.assertIn("pathways", tables)
             self.assertNotIn("пользователи", tables)
+
+            with closing(sqlite3.connect(database_path)) as connection:
+                pathways = connection.execute(
+                    "PRAGMA table_info(pathways)"
+                ).fetchall()
+                row_count = connection.execute(
+                    "SELECT COUNT(*) FROM pathways"
+                ).fetchone()[0]
+                darkness = connection.execute(
+                    """
+                    SELECT name, ru, eng, church, all_users
+                    FROM pathways WHERE name = ?
+                    """,
+                    ("9Darkness",),
+                ).fetchone()
+                distinct_churches = connection.execute(
+                    "SELECT COUNT(DISTINCT church) FROM pathways"
+                ).fetchone()[0]
+
+            self.assertEqual(
+                [(row[1], row[2]) for row in pathways],
+                [
+                    ("name", "TEXT"),
+                    ("ru", "TEXT"),
+                    ("eng", "TEXT"),
+                    ("church", "TEXT"),
+                    ("all_users", "INTEGER"),
+                ],
+            )
+            self.assertEqual(pathways[0][5], 1)
+            self.assertEqual(pathways[-1][4], "0")
+            self.assertEqual(row_count, 60)
+            self.assertEqual(
+                darkness,
+                (
+                    "9Darkness",
+                    "Неспящий",
+                    "Sleepless",
+                    "Церковь Вечной Ночи",
+                    0,
+                ),
+            )
+            self.assertEqual(distinct_churches, 3)
             await reloaded_database.close()
+
+    async def test_pathways_migration_makes_name_primary_key_and_preserves_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "bot.db"
+            with closing(sqlite3.connect(database_path)) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE pathways (
+                        name TEXT,
+                        ru TEXT,
+                        eng TEXT,
+                        church TEXT,
+                        all_users INTEGER
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO pathways (name, ru, eng, church, all_users)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    ("Fool", "Шут", "Fool", "Повелитель Тайн", None),
+                )
+                connection.commit()
+
+            database = SQLiteDatabase(database_path)
+            await database.initialize()
+
+            with closing(sqlite3.connect(database_path)) as connection:
+                columns = connection.execute(
+                    "PRAGMA table_info(pathways)"
+                ).fetchall()
+                row = connection.execute(
+                    "SELECT name, ru, eng, church, all_users FROM pathways"
+                ).fetchone()
+
+            self.assertEqual(next(column[5] for column in columns if column[1] == "name"), 1)
+            self.assertEqual(row, ("Fool", "Шут", "Fool", "Повелитель Тайн", 0))
+            await database.close()
 
     async def test_old_users_table_is_migrated_with_language_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
